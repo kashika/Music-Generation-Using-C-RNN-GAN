@@ -1,7 +1,10 @@
+
+#import libraries
 import torch
 import pretty_midi
 import numpy as np
 import h5py
+#pickle is used to save the model
 import pickle
 import torch.nn as nn
 import torch.utils.data as utils
@@ -11,6 +14,8 @@ from model import PerformanceNet
 import librosa
 from tqdm import tqdm
 import sys
+
+# Mucic file audio synthesizer code is written here
 class AudioSynthesizer():
     def __init__(self, checkpoint, exp_dir, data_source):
         self.exp_dir = exp_dir
@@ -18,18 +23,19 @@ class AudioSynthesizer():
         self.sample_rate = 44100
         self.wps = 44100//256
         self.data_source = data_source
-                
-    def get_test_midi(self):
-
+    #load the test music file            
+    def get_test_midi(self): 
         X = np.load(os.path.join(self.exp_dir,'test_data/test_X.npy'))
         rand = np.random.randint(len(X),size=5)
         score = [X[i] for i in rand]
         return torch.Tensor(score).cuda()
-
-    def process_custom_midi(self, midi_filename):
-
+    #create custom music file 
+    
+    def process_custom_midi(self, midi_filename):    
         midi_dir = os.path.join(self.exp_dir,'midi')
         midi = pretty_midi.PrettyMIDI(os.path.join(midi_dir,midi_filename))    
+        #get piano data and preprocess
+        
         pianoroll = midi.get_piano_roll(fs=self.wps).T
         pianoroll[pianoroll.nonzero()] = 1
         onoff = np.zeros(pianoroll.shape) 
@@ -42,19 +48,21 @@ class AudioSynthesizer():
         
         return pianoroll, onoff
 
-
+    #This function is written to measure th eperformance of the music file generated
     def inference(self):
         model = PerformanceNet().cuda()
         model.load_state_dict(self.checkpoint['state_dict'])
 
         if self.data_source == 'TEST_DATA':
+            #generate test scores
             score = self.get_test_midi()
             score, onoff = torch.split(score, 128, dim=1)
         else:
             score, onoff = self.process_custom_midi(self.data_source)
                    
         print ('Inferencing spectrogram......')
-
+        
+        #Model evaluation is performed here
         with torch.no_grad():
             model.eval()    
             test_results = model(score, onoff)
@@ -66,6 +74,7 @@ class AudioSynthesizer():
             audio = self.griffinlim(test_results[i], audio_id = i+1)
             librosa.output.write_wav(os.path.join(output_dir,'output-{}.wav'.format(i+1)), audio, self.sample_rate)
     
+    # directory to store the music file generated
     def create_output_dir(self):
         success = False
         dir_id = 1
@@ -77,7 +86,7 @@ class AudioSynthesizer():
             except FileExistsError:
                 dir_id += 1
         return audio_out_dir
-
+    # audio synthesis parameters are provided. music hop length - 256, iterations = 300
     def griffinlim(self, spectrogram, audio_id, n_iter = 300, window = 'hann', n_fft = 2048, hop_length = 256, verbose = False):
         
         print ('Synthesizing audio {}'.format(audio_id))
@@ -90,6 +99,7 @@ class AudioSynthesizer():
         angles = np.exp(2j * np.pi * np.random.rand(*spectrogram.shape))
 
         t = tqdm(range(n_iter), ncols=100, mininterval=2.0, disable=not verbose)
+        #preprocessing
         for i in t:
             full = np.abs(spectrogram).astype(np.complex) * angles
             inverse = librosa.istft(full, hop_length = hop_length, window = window)
